@@ -14,27 +14,27 @@ class ClassificationNetwork(torch.nn.Module):
 
         device = _setup_model(self, device)
 
-        # 수정: 영상 특징 추출.
+        # 96×96 → 23×23 → 10×10 → 8×8. 행동 9개의 Q를 각각 출력한다.
         self.conv = torch.nn.Sequential(
-            torch.nn.Conv2d(3, 8, kernel_size=5, stride=4),
+            torch.nn.Conv2d(3, 32, kernel_size=8, stride=4),
             torch.nn.ReLU(),
-            MPSCompatibleAdaptiveAvgPool2d((4, 4)),
+            torch.nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            torch.nn.ReLU(),
         )
-
-        # 수정: 영상 특징 128개 + 센서 7개 → 행동별 점수.
         self.fc = torch.nn.Sequential(
-            torch.nn.Linear(8 * 4 * 4 + 7, self.n_classes),
+            torch.nn.Linear(64 * 8 * 8 + 7, 256),
+            torch.nn.ReLU(),
+            torch.nn.Linear(256, self.n_classes),
         )
-
-        # 베이스라인의 가속 점수 계산 (학습 가능).
-        self.throttle_head = torch.nn.Linear(1, 2)
-        with torch.no_grad():
-            self.throttle_head.weight.copy_(torch.tensor([[0.], [-20.]]))
-            self.throttle_head.bias.copy_(torch.tensor([0., 4.7]))
+        self.apply(_init_q_network)
+        torch.nn.init.uniform_(self.fc[-1].weight, -1e-3, 1e-3)
+        torch.nn.init.zeros_(self.fc[-1].bias)
         self.to(device)
 
     def forward(self, observation):
-        # 전처리 → 특징 추출 → 조향·가속 점수 결합.
+        # 전처리 → 영상 특징 + 센서 7개 → 행동별 Q값.
 
         batch_size = observation.shape[0]
 
@@ -42,25 +42,11 @@ class ClassificationNetwork(torch.nn.Module):
             observation.detach(), batch_size)
 
         x = observation / 255.0
-
         x = x.permute(0, 3, 1, 2).contiguous()
-
         x = self.conv(x)
         x = x.reshape(batch_size, -1)
-
         x = torch.cat([x, speed, abs_sensors, steering, gyroscope], dim=1)
-        raw = self.fc(x)
-        steering_values = torch.stack([raw[:, [0,1,2]].max(1).values,
-                                       raw[:, [3,5,7]].max(1).values,
-                                       raw[:, [4,6,8]].max(1).values], dim=1)
-        throttle_values = self.throttle_head(speed)
-
-        steer_index = [0,0,0,1,2,1,2,1,2]
-        throttle_index = [0,1,0,0,0,1,1,0,0]
-        values = steering_values[:, steer_index] + throttle_values[:, throttle_index]
-
-        brake_penalty = raw.new_tensor([0,0,5,0,0,0,0,5,5])
-        return values + .01 * raw - brake_penalty
+        return self.fc(x)
 
     def actions_to_classes(self, actions):
         return _fixed_actions_to_classes(self, actions)
@@ -72,18 +58,22 @@ class ClassificationNetwork(torch.nn.Module):
         return _fixed_extract_sensor_values(self, observation, batch_size)
 
 # ② 보상: 아래 계수 또는 calculate_reward()를 수정한 뒤 데이터를 다시 수집합니다.
-REWARD_SETTINGS = dict(new_road=1.0, center=0.5, grass=0.5, time=0.0, finish=0.0)
+# 진행 구간, 중앙(제곱), 도로 위 속도, 잔디 페널티, 시간, 완주.
+REWARD_SETTINGS = dict(new_road=1.0, center=1.5, grass=1.0, time=0.01, finish=10.0, speed=0.02)
 
 # [고정 규약] calculate_reward(context)는 유한한 숫자 하나를 반환합니다.
 def calculate_reward(context):
-    # 새 구간 수, 중앙 근접도(0~1), 도로 여부, 완주 여부로 스텝 보상을 계산합니다.
+    # 새 구간·중앙 정렬·도로 위 속도로 채점(진행률, 중앙, 랩타임)에 맞춘다.
     # context에는 speed, dt, elapsed, aborted도 제공됩니다.
 
+    center = context['center_alignment']
     reward = context['new_road_segments'] * (
-        REWARD_SETTINGS['new_road'] + REWARD_SETTINGS['center'] * context['center_alignment'])
-    reward -= REWARD_SETTINGS['time']
-    if not context['on_road']:
+        REWARD_SETTINGS['new_road'] + REWARD_SETTINGS['center'] * center ** 2)
+    if context['on_road']:
+        reward += REWARD_SETTINGS['speed'] * context['speed'] * center
+    else:
         reward -= REWARD_SETTINGS['grass']
+    reward -= REWARD_SETTINGS['time']
     if context['finished']:
         reward += REWARD_SETTINGS['finish']
     return reward
@@ -103,6 +93,16 @@ def collection_action(model, observation, device, epsilon, rng):
 
 
 
+
+
+def _init_q_network(module):
+    if isinstance(module, torch.nn.Conv2d):
+        torch.nn.init.kaiming_uniform_(module.weight, nonlinearity='relu')
+        if module.bias is not None:
+            torch.nn.init.zeros_(module.bias)
+    elif isinstance(module, torch.nn.Linear):
+        torch.nn.init.kaiming_uniform_(module.weight, nonlinearity='relu')
+        torch.nn.init.zeros_(module.bias)
 
 
 # ===========================================

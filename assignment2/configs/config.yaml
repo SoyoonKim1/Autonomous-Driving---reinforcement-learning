@@ -7,11 +7,11 @@ collect:
   epsilon: 0.1  # 90% 모델의 최선 행동 / 10% 무작위 행동 (0~1)
 train:
   data_dir: data  # 제공 데이터와 직접 수집한 데이터 모두 사용
-  epochs: 5  # 매 epoch마다 모든 완료된 데이터 사용
+  epochs: 20  # 매 epoch마다 모든 완료된 데이터 사용
   device: auto  # auto / cuda / mps / cpu
   num_workers: 2  # 병렬 파일 읽기 (0: 순차 읽기, 최대 16)
   batch_size: 64
-  learning_rate: 0.00001
+  learning_rate: 0.0001
   gamma: 0.99
   conservative_weight: 0.1
 evaluate:
