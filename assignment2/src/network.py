@@ -14,27 +14,23 @@ class ClassificationNetwork(torch.nn.Module):
 
         device = _setup_model(self, device)
 
-        # 96×96 → 23×23 → 10×10 → 8×8. 행동 9개의 Q를 각각 출력한다.
+        # 베이스라인과 같은 층. 가중치를 이어 받아 47초 완주 정책에서 미세 조정한다.
         self.conv = torch.nn.Sequential(
-            torch.nn.Conv2d(3, 32, kernel_size=8, stride=4),
+            torch.nn.Conv2d(3, 8, kernel_size=5, stride=4),
             torch.nn.ReLU(),
-            torch.nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            torch.nn.ReLU(),
-            torch.nn.Conv2d(64, 64, kernel_size=3, stride=1),
-            torch.nn.ReLU(),
+            MPSCompatibleAdaptiveAvgPool2d((4, 4)),
         )
         self.fc = torch.nn.Sequential(
-            torch.nn.Linear(64 * 8 * 8 + 7, 256),
-            torch.nn.ReLU(),
-            torch.nn.Linear(256, self.n_classes),
+            torch.nn.Linear(8 * 4 * 4 + 7, self.n_classes),
         )
-        self.apply(_init_q_network)
-        torch.nn.init.uniform_(self.fc[-1].weight, -1e-3, 1e-3)
-        torch.nn.init.zeros_(self.fc[-1].bias)
+        self.throttle_head = torch.nn.Linear(1, 2)
+        with torch.no_grad():
+            self.throttle_head.weight.copy_(torch.tensor([[0.], [-20.]]))
+            self.throttle_head.bias.copy_(torch.tensor([0., 4.7]))
         self.to(device)
 
     def forward(self, observation):
-        # 전처리 → 영상 특징 + 센서 7개 → 행동별 Q값.
+        # 전처리 → 조향 특징과 속도 기반 가속을 합쳐 행동 9개의 Q값을 만든다.
 
         batch_size = observation.shape[0]
 
@@ -46,7 +42,16 @@ class ClassificationNetwork(torch.nn.Module):
         x = self.conv(x)
         x = x.reshape(batch_size, -1)
         x = torch.cat([x, speed, abs_sensors, steering, gyroscope], dim=1)
-        return self.fc(x)
+        raw = self.fc(x)
+        steering_values = torch.stack([raw[:, [0, 1, 2]].max(1).values,
+                                       raw[:, [3, 5, 7]].max(1).values,
+                                       raw[:, [4, 6, 8]].max(1).values], dim=1)
+        throttle_values = self.throttle_head(speed)
+        steer_index = [0, 0, 0, 1, 2, 1, 2, 1, 2]
+        throttle_index = [0, 1, 0, 0, 0, 1, 1, 0, 0]
+        values = steering_values[:, steer_index] + throttle_values[:, throttle_index]
+        brake_penalty = raw.new_tensor([0, 0, 5, 0, 0, 0, 0, 5, 5])
+        return values + .01 * raw - brake_penalty
 
     def actions_to_classes(self, actions):
         return _fixed_actions_to_classes(self, actions)
@@ -90,19 +95,6 @@ def collection_action(model, observation, device, epsilon, rng):
         if scores.shape != (1, 9) or not torch.isfinite(scores).all():
             raise ValueError('모델 출력은 유한한 (1, 9) 행동 점수여야 합니다.')
         return int(scores.argmax(1).item())
-
-
-
-
-
-def _init_q_network(module):
-    if isinstance(module, torch.nn.Conv2d):
-        torch.nn.init.kaiming_uniform_(module.weight, nonlinearity='relu')
-        if module.bias is not None:
-            torch.nn.init.zeros_(module.bias)
-    elif isinstance(module, torch.nn.Linear):
-        torch.nn.init.kaiming_uniform_(module.weight, nonlinearity='relu')
-        torch.nn.init.zeros_(module.bias)
 
 
 # ===========================================
