@@ -64,7 +64,7 @@ class ClassificationNetwork(torch.nn.Module):
 
 # ② 보상: 아래 계수 또는 calculate_reward()를 수정한 뒤 데이터를 다시 수집합니다.
 # 진행 구간, 중앙(제곱), 도로 위 속도, 잔디 페널티, 시간, 완주.
-REWARD_SETTINGS = dict(new_road=1.0, center=1.5, grass=1.0, time=0.01, finish=10.0, speed=0.02)
+REWARD_SETTINGS = dict(new_road=1.0, center=3.0, grass=3.0, time=0.01, finish=10.0, speed=0.005)
 
 # [고정 규약] calculate_reward(context)는 유한한 숫자 하나를 반환합니다.
 def calculate_reward(context):
