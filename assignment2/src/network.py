@@ -63,19 +63,19 @@ class ClassificationNetwork(torch.nn.Module):
         return _fixed_extract_sensor_values(self, observation, batch_size)
 
 # ② 보상: 아래 계수 또는 calculate_reward()를 수정한 뒤 데이터를 다시 수집합니다.
-# 진행 구간, 중앙(제곱), 도로 위 속도, 잔디 페널티, 시간, 완주.
-REWARD_SETTINGS = dict(new_road=1.0, center=3.0, grass=3.0, time=0.01, finish=10.0, speed=0.005)
+# 채점 중앙 점수는 한가운데에서만 크게 오르므로 네제곱을 쓴다.
+REWARD_SETTINGS = dict(new_road=1.0, center=3.0, grass=3.0, time=0.01, finish=10.0, speed=0.01)
 
 # [고정 규약] calculate_reward(context)는 유한한 숫자 하나를 반환합니다.
 def calculate_reward(context):
-    # 새 구간·중앙 정렬·도로 위 속도로 채점(진행률, 중앙, 랩타임)에 맞춘다.
+    # 도로 한가운데에 있을 때만 구간 보상과 속도 보상이 커진다.
     # context에는 speed, dt, elapsed, aborted도 제공됩니다.
 
-    center = context['center_alignment']
+    centered = context['center_alignment'] ** 4
     reward = context['new_road_segments'] * (
-        REWARD_SETTINGS['new_road'] + REWARD_SETTINGS['center'] * center ** 2)
+        REWARD_SETTINGS['new_road'] + REWARD_SETTINGS['center'] * centered)
     if context['on_road']:
-        reward += REWARD_SETTINGS['speed'] * context['speed'] * center
+        reward += REWARD_SETTINGS['speed'] * context['speed'] * centered
     else:
         reward -= REWARD_SETTINGS['grass']
     reward -= REWARD_SETTINGS['time']

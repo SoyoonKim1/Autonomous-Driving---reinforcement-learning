@@ -2,11 +2,11 @@
 language: kor
 inference_device: auto  # auto / cpu / cuda / mps
 collect:
-  model_path: latest  # 매 실행 시 최신 agent + 저장된 구조, 없으면 baseline
-  data_dir: data/centered
-  epsilon: 0.02  # 98% 모델의 최선 행동 / 2% 무작위 행동 (0~1)
+  model_path: models/baseline.pth  # 두 번째 수집 전에 43초 모델 경로로 바꾼다
+  data_dir: data/balanced
+  epsilon: 0  # 두 번째 수집에서는 0.02
 train:
-  data_dir: data/centered  # 이번 보상으로 새로 모은 완주만 사용
+  data_dir: data/balanced  # 이번 보상으로 새로 모은 주행만 사용
   epochs: 5  # 매 epoch마다 모든 완료된 데이터 사용
   device: auto  # auto / cuda / mps / cpu
   num_workers: 2  # 병렬 파일 읽기 (0: 순차 읽기, 최대 16)
