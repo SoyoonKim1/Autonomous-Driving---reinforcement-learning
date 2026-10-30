@@ -96,12 +96,12 @@ def collection_action(model, observation, device, epsilon, rng):
             raise ValueError('모델 출력은 유한한 (1, 9) 행동 점수여야 합니다.')
         action = int(scores.argmax(1).item())
     speed = float(observation[84:94, 12, 0].sum()) / 255.0 / 5.0
-    # 계기판 속도는 최대 약 2. 1.0에서 가속을 끊으면 랩이 40초에 고정된다.
-    if action == 0 and epsilon > 0 and speed < 1.6 and rng.random() < epsilon:
+    # 1.6까지 가속하면 코너를 벗어난다. 40초 완주(가속 1.0, 브레이크 0.4)보다 한 단계만 올린다.
+    if action == 0 and epsilon > 0 and speed < 1.15 and rng.random() < epsilon:
         return 1
-    if action == 3 and speed >= 1.0:
+    if action == 3 and speed >= 0.55:
         return 7
-    if action == 4 and speed >= 1.0:
+    if action == 4 and speed >= 0.55:
         return 8
     return action
 
