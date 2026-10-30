@@ -84,26 +84,24 @@ def calculate_reward(context):
     return reward
 
 
-# ③ 수집: 직선에서만, 속도가 낮을 때만 가속을 더한다.
-# 0 정지→1 가속. 조향은 바로 따른다. 속도 상한은 계기판 속도 특징(최대 약 2) 기준이다.
-_THROTTLE_UPGRADE = {0: 1}
-_SPEED_BOOST_LIMIT = 0.45
-
-def _hud_speed(observation):
-    return float(observation[84:94, 12, 0].sum()) / 255.0 / 5.0
-
+# ③ 수집: 43초 모델의 조향을 유지한 채 직선은 가속, 빠른 코너는 브레이크.
+# 함수 밖에 정의를 추가하면 학습이 43초 가중치를 이어 받지 못한다.
 def collection_action(model, observation, device, epsilon, rng):
     # [고정 규약] 위 함수 이름·인자 유지, 반환값은 행동 번호 0~8의 정수.
-    # 추론은 이 함수를 쓰지 않는다. 학습된 Q가 가속을 고르기 전까지는 수집에만 적용된다.
+    # 추론은 이 함수를 쓰지 않는다.
+    # 0 직진→1 가속. 빠른데 3 좌/4 우이면 7 좌+브레이크, 8 우+브레이크.
     with torch.inference_mode():
         scores = model(torch.as_tensor(observation[None].copy(), device=device, dtype=torch.float32))
         if scores.shape != (1, 9) or not torch.isfinite(scores).all():
             raise ValueError('모델 출력은 유한한 (1, 9) 행동 점수여야 합니다.')
         action = int(scores.argmax(1).item())
-    upgrade = _THROTTLE_UPGRADE.get(action)
-    if (upgrade is not None and epsilon > 0 and rng.random() < epsilon
-            and _hud_speed(observation) < _SPEED_BOOST_LIMIT):
-        return upgrade
+    speed = float(observation[84:94, 12, 0].sum()) / 255.0 / 5.0
+    if action == 0 and epsilon > 0 and speed < 1.0 and rng.random() < epsilon:
+        return 1
+    if action == 3 and speed >= 0.4:
+        return 7
+    if action == 4 and speed >= 0.4:
+        return 8
     return action
 
 

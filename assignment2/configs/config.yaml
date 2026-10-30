@@ -2,16 +2,16 @@
 language: kor
 inference_device: auto  # auto / cpu / cuda / mps
 collect:
-  model_path: models/20261027_144131.pth  # 43.54초 정책. 144131과 같은 주행이다
-  data_dir: data/boost
-  epsilon: 0.8  # 느린 직진의 80%만 가속. 속도가 오르면 모델 조향 그대로 둔다
+  model_path: models/20261027_144131.pth  # 코너를 도는 43.54초 모델
+  data_dir: data/fast19
+  epsilon: 1.0  # 직진이면 항상 가속. 빠른 코너에서는 코드가 브레이크를 넣는다
 train:
-  data_dir: data/boost  # 이번 가속 수집만 사용
+  data_dir: data/fast19  # 이번 수집만 사용. 이전 boost 데이터는 넣지 않는다
   epochs: 5  # 매 epoch마다 모든 완료된 데이터 사용
   device: auto  # auto / cuda / mps / cpu
   num_workers: 2  # 병렬 파일 읽기 (0: 순차 읽기, 최대 16)
   batch_size: 64
-  learning_rate: 0.0001
+  learning_rate: 0.00001
   gamma: 0.99
   conservative_weight: 0.1
 evaluate:
