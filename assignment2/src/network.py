@@ -84,9 +84,25 @@ def calculate_reward(context):
     return reward
 
 
-# ③ 수집: 직선에서만 가속을 더한다. 좌우 조향 중 가속은 코너를 벗어나게 한다.
-# 0 정지→1 가속. 3 좌, 4 우는 모델이 고른 그대로 둔다.
+# ③ 수집: 직선에서만 가속을 더한다. 짧은 좌우 반전은 무시한다.
+# 0 정지→1 가속. 같은 방향이 5프레임(0.1초) 유지될 때만 조향을 바꾼다.
 _THROTTLE_UPGRADE = {0: 1}
+_STEER_HOLD_FRAMES = 5
+_steer_hold = {"direction": 0, "pending": 0, "count": 0}
+
+def _steer_direction(action):
+    if action in (3, 5, 7):
+        return -1
+    if action in (4, 6, 8):
+        return 1
+    return 0
+
+def _action_for_direction(direction):
+    if direction < 0:
+        return 3
+    if direction > 0:
+        return 4
+    return 0
 
 def collection_action(model, observation, device, epsilon, rng):
     # [고정 규약] 위 함수 이름·인자 유지, 반환값은 행동 번호 0~8의 정수.
@@ -96,6 +112,21 @@ def collection_action(model, observation, device, epsilon, rng):
         if scores.shape != (1, 9) or not torch.isfinite(scores).all():
             raise ValueError('모델 출력은 유한한 (1, 9) 행동 점수여야 합니다.')
         action = int(scores.argmax(1).item())
+    direction = _steer_direction(action)
+    hold = _steer_hold
+    if direction == hold["direction"]:
+        hold["pending"] = direction
+        hold["count"] = 0
+    else:
+        if hold["pending"] == direction:
+            hold["count"] += 1
+        else:
+            hold["pending"] = direction
+            hold["count"] = 1
+        if hold["count"] >= _STEER_HOLD_FRAMES:
+            hold["direction"] = direction
+        else:
+            action = _action_for_direction(hold["direction"])
     upgrade = _THROTTLE_UPGRADE.get(action)
     if upgrade is not None and epsilon > 0 and rng.random() < epsilon:
         return upgrade
