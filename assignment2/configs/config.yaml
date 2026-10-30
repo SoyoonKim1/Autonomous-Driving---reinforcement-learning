@@ -4,7 +4,7 @@ inference_device: auto  # auto / cpu / cuda / mps
 collect:
   model_path: models/20261027_144131.pth  # 43.54초 정책. 144131과 같은 주행이다
   data_dir: data/boost
-  epsilon: 0.8  # 직진(행동 0)의 80%만 가속으로 바꾼다. 코너 조향은 유지
+  epsilon: 0.8  # 느린 직진의 80%만 가속. 속도가 오르면 모델 조향 그대로 둔다
 train:
   data_dir: data/boost  # 이번 가속 수집만 사용
   epochs: 5  # 매 epoch마다 모든 완료된 데이터 사용
