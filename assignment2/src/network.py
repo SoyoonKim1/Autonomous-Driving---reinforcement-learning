@@ -84,9 +84,9 @@ def calculate_reward(context):
     return reward
 
 
-# ③ 수집: 모델의 조향은 유지하고, epsilon 확률로 가속을 더한다.
-# 0 정지→1 가속, 3 좌→5 좌+가속, 4 우→6 우+가속.
-_THROTTLE_UPGRADE = {0: 1, 3: 5, 4: 6}
+# ③ 수집: 직선에서만 가속을 더한다. 좌우 조향 중 가속은 코너를 벗어나게 한다.
+# 0 정지→1 가속. 3 좌, 4 우는 모델이 고른 그대로 둔다.
+_THROTTLE_UPGRADE = {0: 1}
 
 def collection_action(model, observation, device, epsilon, rng):
     # [고정 규약] 위 함수 이름·인자 유지, 반환값은 행동 번호 0~8의 정수.
