@@ -63,19 +63,19 @@ class ClassificationNetwork(torch.nn.Module):
         return _fixed_extract_sensor_values(self, observation, batch_size)
 
 # ② 보상: 아래 계수 또는 calculate_reward()를 수정한 뒤 데이터를 다시 수집합니다.
-# 채점 중앙 점수는 한가운데에서만 크게 오르므로 네제곱을 쓴다.
-REWARD_SETTINGS = dict(new_road=1.0, center=3.0, grass=3.0, time=0.01, finish=10.0, speed=0.01)
+# 랩타임이 목표다. 도로 위 속도에 보상하고, 잔디에 오래 머물면 감점한다.
+REWARD_SETTINGS = dict(new_road=1.0, center=0.3, grass=1.5, time=0.02, finish=10.0, speed=0.03)
 
 # [고정 규약] calculate_reward(context)는 유한한 숫자 하나를 반환합니다.
 def calculate_reward(context):
-    # 도로 한가운데에 있을 때만 구간 보상과 속도 보상이 커진다.
+    # 도로 위에 있는 동안의 속도가 랩타임을 줄인다. 한가운데 유지는 약한 가산만 둔다.
     # context에는 speed, dt, elapsed, aborted도 제공됩니다.
 
-    centered = context['center_alignment'] ** 4
+    center = context['center_alignment']
     reward = context['new_road_segments'] * (
-        REWARD_SETTINGS['new_road'] + REWARD_SETTINGS['center'] * centered)
+        REWARD_SETTINGS['new_road'] + REWARD_SETTINGS['center'] * center)
     if context['on_road']:
-        reward += REWARD_SETTINGS['speed'] * context['speed'] * centered
+        reward += REWARD_SETTINGS['speed'] * context['speed']
     else:
         reward -= REWARD_SETTINGS['grass']
     reward -= REWARD_SETTINGS['time']
@@ -84,17 +84,22 @@ def calculate_reward(context):
     return reward
 
 
-# ③ 수집: 아래 ε-greedy 구현은 자유롭게 변경할 수 있습니다.
+# ③ 수집: 모델의 조향은 유지하고, epsilon 확률로 가속을 더한다.
+# 0 정지→1 가속, 3 좌→5 좌+가속, 4 우→6 우+가속.
+_THROTTLE_UPGRADE = {0: 1, 3: 5, 4: 6}
+
 def collection_action(model, observation, device, epsilon, rng):
     # [고정 규약] 위 함수 이름·인자 유지, 반환값은 행동 번호 0~8의 정수.
-    # [수정 가능] 함수 본문 전체. ε-greedy 대신 정책 확률 샘플링 등 사용 가능.
-    if epsilon > 0 and rng.random() < epsilon:
-        return int(rng.integers(9))
+    # 추론은 이 함수를 쓰지 않는다. 학습된 Q가 가속을 고르기 전까지는 수집에만 적용된다.
     with torch.inference_mode():
         scores = model(torch.as_tensor(observation[None].copy(), device=device, dtype=torch.float32))
         if scores.shape != (1, 9) or not torch.isfinite(scores).all():
             raise ValueError('모델 출력은 유한한 (1, 9) 행동 점수여야 합니다.')
-        return int(scores.argmax(1).item())
+        action = int(scores.argmax(1).item())
+    upgrade = _THROTTLE_UPGRADE.get(action)
+    if upgrade is not None and epsilon > 0 and rng.random() < epsilon:
+        return upgrade
+    return action
 
 
 # ===========================================

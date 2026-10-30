@@ -2,16 +2,16 @@
 language: kor
 inference_device: auto  # auto / cpu / cuda / mps
 collect:
-  model_path: models/baseline.pth  # 두 번째 수집 전에 43초 모델 경로로 바꾼다
-  data_dir: data/balanced
-  epsilon: 0  # 두 번째 수집에서는 0.02
+  model_path: models/20261027_144131.pth  # 43.54초 정책. 144131과 같은 주행이다
+  data_dir: data/boost
+  epsilon: 0.6  # 가속이 빠진 행동의 60%를 같은 조향+가속으로 바꾼다
 train:
-  data_dir: data/balanced  # 이번 보상으로 새로 모은 주행만 사용
+  data_dir: data/boost  # 이번 가속 수집만 사용
   epochs: 5  # 매 epoch마다 모든 완료된 데이터 사용
   device: auto  # auto / cuda / mps / cpu
   num_workers: 2  # 병렬 파일 읽기 (0: 순차 읽기, 최대 16)
   batch_size: 64
-  learning_rate: 0.00001
+  learning_rate: 0.0001
   gamma: 0.99
   conservative_weight: 0.1
 evaluate:
