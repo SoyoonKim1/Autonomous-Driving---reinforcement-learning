@@ -5,6 +5,7 @@
 # 학습은 제공된 Double DQN 코드로 고정합니다.
 # 학습 후 저장되는 .network.py와 .pth 두 파일을 제출합니다.
 import torch
+from pathlib import Path
 
 # ① 모델: 영상·센서 입력으로 행동 9개의 Q값을 계산합니다.
 # [고정 규약] ClassificationNetwork(device=None), forward(observation)의 입출력.
@@ -24,13 +25,28 @@ class ClassificationNetwork(torch.nn.Module):
             torch.nn.Linear(8 * 4 * 4 + 7, self.n_classes),
         )
         self.throttle_head = torch.nn.Linear(1, 2)
-        with torch.no_grad():
-            self.throttle_head.weight.copy_(torch.tensor([[0.], [-20.]]))
-            self.throttle_head.bias.copy_(torch.tensor([0., 4.7]))
+        self._load_corner_weights()
         self.to(device)
 
+    def _load_corner_weights(self):
+        # 43초 모델의 조향 가중치만 가져온다. 가속 억제 식(-20×속도)은 가져오지 않는다.
+        models = Path(__file__).resolve().parents[1] / 'models'
+        for name in ('20261027_144131.pth', '20261027_174602.pth', '20261030_171427.pth', 'baseline.pth'):
+            path = models / name
+            if not path.is_file():
+                continue
+            payload = torch.load(path, map_location='cpu', weights_only=True)
+            state = payload.get('state_dict', payload) if isinstance(payload, dict) else payload
+            own = self.state_dict()
+            copied = {key: value for key, value in state.items()
+                      if key in own and tuple(value.shape) == tuple(own[key].shape) and key.startswith(('conv.', 'fc.'))}
+            if copied:
+                self.load_state_dict(copied, strict=False)
+                return
+
     def forward(self, observation):
-        # 전처리 → 조향 특징과 속도 기반 가속을 합쳐 행동 9개의 Q값을 만든다.
+        # 조향은 학습된 특징, 속도 조절은 그 조향이 버티던 40초 완주 규칙.
+        # 직진이고 계기판 속도가 1 미만이면 가속, 좌우인데 속도가 0.4 이상이면 브레이크.
 
         batch_size = observation.shape[0]
 
@@ -46,12 +62,19 @@ class ClassificationNetwork(torch.nn.Module):
         steering_values = torch.stack([raw[:, [0, 1, 2]].max(1).values,
                                        raw[:, [3, 5, 7]].max(1).values,
                                        raw[:, [4, 6, 8]].max(1).values], dim=1)
-        throttle_values = self.throttle_head(speed)
         steer_index = [0, 0, 0, 1, 2, 1, 2, 1, 2]
-        throttle_index = [0, 1, 0, 0, 0, 1, 1, 0, 0]
-        values = steering_values[:, steer_index] + throttle_values[:, throttle_index]
-        brake_penalty = raw.new_tensor([0, 0, 5, 0, 0, 0, 0, 5, 5])
-        return values + .01 * raw - brake_penalty
+        values = steering_values[:, steer_index].clone()
+        straight = ((steering_values[:, 0] >= steering_values[:, 1])
+                    & (steering_values[:, 0] >= steering_values[:, 2])).float()
+        left = ((steering_values[:, 1] > steering_values[:, 0])
+                & (steering_values[:, 1] >= steering_values[:, 2])).float()
+        right = ((steering_values[:, 2] > steering_values[:, 0])
+                 & (steering_values[:, 2] > steering_values[:, 1])).float()
+        hud = speed.squeeze(1)
+        values[:, 1] = values[:, 1] + 20 * (hud < 1.0).float() * straight
+        values[:, 7] = values[:, 7] + 20 * (hud >= 0.4).float() * left
+        values[:, 8] = values[:, 8] + 20 * (hud >= 0.4).float() * right
+        return values + .01 * raw
 
     def actions_to_classes(self, actions):
         return _fixed_actions_to_classes(self, actions)
@@ -84,24 +107,23 @@ def calculate_reward(context):
     return reward
 
 
-# ③ 수집: 43초 모델의 조향을 유지한 채 직선은 가속, 빠른 코너는 브레이크.
-# 함수 밖에 정의를 추가하면 학습이 43초 가중치를 이어 받지 못한다.
+# ③ 수집: 10바퀴 모두 40초에 완주했던 규칙만 사용한다.
+# 속도를 그보다 올리면 이 조향은 코너를 벗어난다.
 def collection_action(model, observation, device, epsilon, rng):
     # [고정 규약] 위 함수 이름·인자 유지, 반환값은 행동 번호 0~8의 정수.
-    # 추론은 이 함수를 쓰지 않는다.
-    # 0 직진→1 가속. 빠른데 3 좌/4 우이면 7 좌+브레이크, 8 우+브레이크.
     with torch.inference_mode():
         scores = model(torch.as_tensor(observation[None].copy(), device=device, dtype=torch.float32))
         if scores.shape != (1, 9) or not torch.isfinite(scores).all():
             raise ValueError('모델 출력은 유한한 (1, 9) 행동 점수여야 합니다.')
         action = int(scores.argmax(1).item())
+    if epsilon <= 0:
+        return action
     speed = float(observation[84:94, 12, 0].sum()) / 255.0 / 5.0
-    # 1.6까지 가속하면 코너를 벗어난다. 40초 완주(가속 1.0, 브레이크 0.4)보다 한 단계만 올린다.
-    if action == 0 and epsilon > 0 and speed < 1.15 and rng.random() < epsilon:
+    if action == 0 and speed < 1.0:
         return 1
-    if action == 3 and speed >= 0.55:
+    if action == 3 and speed >= 0.4:
         return 7
-    if action == 4 and speed >= 0.55:
+    if action == 4 and speed >= 0.4:
         return 8
     return action
 

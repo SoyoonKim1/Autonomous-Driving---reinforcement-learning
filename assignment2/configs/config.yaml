@@ -4,14 +4,14 @@ inference_device: auto  # auto / cpu / cuda / mps
 collect:
   model_path: models/20261027_144131.pth  # 코너를 도는 43.54초 모델
   data_dir: data/fast19
-  epsilon: 1.0  # 직진이면 항상 가속. 빠른 코너에서는 코드가 브레이크를 넣는다
+  epsilon: 1.0  # 직진 가속과 코너 브레이크 규칙을 켠다
 train:
-  data_dir: data/fast19  # 이번 수집만 사용. 이전 boost 데이터는 넣지 않는다
-  epochs: 5  # 매 epoch마다 모든 완료된 데이터 사용
+  data_dir: data/fast19  # 40초에 완주한 기록만 남기고 학습한다
+  epochs: 1  # 조향 가중치를 유지하기 위해 한 번만 통과
   device: auto  # auto / cuda / mps / cpu
   num_workers: 2  # 병렬 파일 읽기 (0: 순차 읽기, 최대 16)
   batch_size: 64
-  learning_rate: 0.00001
+  learning_rate: 0.000001
   gamma: 0.99
   conservative_weight: 0.1
 evaluate:
